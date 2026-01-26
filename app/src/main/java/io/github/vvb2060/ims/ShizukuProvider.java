@@ -3,8 +3,6 @@ package io.github.vvb2060.ims;
 import static io.github.vvb2060.ims.PrivilegedProcess.TAG;
 
 import android.app.ActivityManager;
-import android.app.IActivityManager;
-import android.app.UiAutomationConnection;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -13,7 +11,6 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Process;
-import android.os.ServiceManager;
 import android.system.Os;
 import android.util.Log;
 
@@ -31,7 +28,7 @@ public class ShizukuProvider extends rikka.shizuku.ShizukuProvider {
 
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
-        var sdkUid = Process.toSdkSandboxUid(Os.getuid());
+        var sdkUid = getSdkSandboxUid(Os.getuid());
         var callingUid = Binder.getCallingUid();
         if (callingUid != sdkUid && callingUid != Process.SHELL_UID) {
             return new Bundle();
@@ -57,13 +54,21 @@ public class ShizukuProvider extends rikka.shizuku.ShizukuProvider {
 
     private static void startShellPermissionDelegate(IBinder binder, int sdkUid) {
         try {
-            var activity = ServiceManager.getService(Context.ACTIVITY_SERVICE);
-            var am = IActivityManager.Stub.asInterface(new ShizukuBinderWrapper(activity));
-            am.startDelegateShellPermissionIdentity(sdkUid, null);
+            var activity = getService(Context.ACTIVITY_SERVICE);
+            var am = getActivityManager(new ShizukuBinderWrapper(activity));
+            var startMethod = findMethod(am.getClass(), "startDelegateShellPermissionIdentity", 2);
+            if (startMethod == null) {
+                throw new NoSuchMethodException("startDelegateShellPermissionIdentity");
+            }
+            startMethod.invoke(am, sdkUid, null);
             var data = Parcel.obtain();
             binder.transact(1, data, null, 0);
             data.recycle();
-            am.stopDelegateShellPermissionIdentity();
+            var stopMethod = findMethod(am.getClass(), "stopDelegateShellPermissionIdentity", 0);
+            if (stopMethod == null) {
+                throw new NoSuchMethodException("stopDelegateShellPermissionIdentity");
+            }
+            stopMethod.invoke(am);
         } catch (Exception e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
@@ -71,15 +76,87 @@ public class ShizukuProvider extends rikka.shizuku.ShizukuProvider {
 
     private static void startInstrument(Context context) {
         try {
-            var binder = ServiceManager.getService(Context.ACTIVITY_SERVICE);
-            var am = IActivityManager.Stub.asInterface(new ShizukuBinderWrapper(binder));
+            var binder = getService(Context.ACTIVITY_SERVICE);
+            var am = getActivityManager(new ShizukuBinderWrapper(binder));
             var name = new ComponentName(context, PrivilegedProcess.class);
-            var flags = ActivityManager.INSTR_FLAG_DISABLE_HIDDEN_API_CHECKS;
-            flags |= ActivityManager.INSTR_FLAG_INSTRUMENT_SDK_SANDBOX;
-            var connection = new UiAutomationConnection();
-            am.startInstrumentation(name, null, flags, new Bundle(), null, connection, 0, null);
+            var flags = getActivityManagerFlag("INSTR_FLAG_DISABLE_HIDDEN_API_CHECKS")
+                    | getActivityManagerFlag("INSTR_FLAG_INSTRUMENT_SDK_SANDBOX");
+            var connection = newUiAutomationConnection();
+            startInstrumentation(am, name, flags, connection);
         } catch (Exception e) {
             Log.e(TAG, Log.getStackTraceString(e));
         }
+    }
+
+    private static int getSdkSandboxUid(int uid) {
+        try {
+            var method = Process.class.getDeclaredMethod("toSdkSandboxUid", int.class);
+            method.setAccessible(true);
+            return (int) method.invoke(null, uid);
+        } catch (Exception e) {
+            try {
+                var field = Process.class.getDeclaredField("FIRST_SDK_SANDBOX_UID");
+                field.setAccessible(true);
+                var firstSdk = field.getInt(null);
+                return uid + (firstSdk - Process.FIRST_APPLICATION_UID);
+            } catch (Exception ignored) {
+                return uid;
+            }
+        }
+    }
+
+    private static IBinder getService(String name) throws Exception {
+        var clazz = Class.forName("android.os.ServiceManager");
+        var method = clazz.getMethod("getService", String.class);
+        return (IBinder) method.invoke(null, name);
+    }
+
+    private static Object getActivityManager(IBinder binder) throws Exception {
+        var clazz = Class.forName("android.app.IActivityManager$Stub");
+        var method = clazz.getMethod("asInterface", IBinder.class);
+        return method.invoke(null, binder);
+    }
+
+    private static int getActivityManagerFlag(String name) {
+        try {
+            var field = ActivityManager.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.getInt(null);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static Object newUiAutomationConnection() {
+        try {
+            var clazz = Class.forName("android.app.UiAutomationConnection");
+            return clazz.getConstructor().newInstance();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void startInstrumentation(Object am, ComponentName name,
+                                             int flags, Object connection) throws Exception {
+        var method = findMethod(am.getClass(), "startInstrumentation", 8);
+        if (method != null) {
+            method.invoke(am, name, null, flags, new Bundle(), null, connection, 0, null);
+            return;
+        }
+        method = findMethod(am.getClass(), "startInstrumentation", 7);
+        if (method != null) {
+            method.invoke(am, name, null, flags, new Bundle(), null, connection, 0);
+            return;
+        }
+        throw new NoSuchMethodException("startInstrumentation");
+    }
+
+    private static java.lang.reflect.Method findMethod(Class<?> clazz, String name, int count) {
+        for (var method : clazz.getMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() == count) {
+                return method;
+            }
+        }
+        return null;
     }
 }

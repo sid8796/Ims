@@ -2,7 +2,6 @@ package io.github.vvb2060.ims;
 
 import static rikka.shizuku.ShizukuProvider.METHOD_GET_BINDER;
 
-import android.annotation.NonNull;
 import android.annotation.SuppressLint;
 import android.app.Instrumentation;
 import android.content.Context;
@@ -17,14 +16,26 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionManager;
 import android.util.Log;
 
+import org.lsposed.hiddenapibypass.LSPass;
+
 public class PrivilegedProcess extends Instrumentation {
     static final String TAG = "vvb";
+
+    static {
+        LSPass.setHiddenApiExemptions("");
+    }
+
+    private static final String KEY_SHOW_WIFI_CALLING_ICON_IN_STATUS_BAR_BOOL =
+            getCarrierConfigKey("KEY_SHOW_WIFI_CALLING_ICON_IN_STATUS_BAR_BOOL",
+                    "show_wifi_calling_icon_in_status_bar_bool");
+    private static final String KEY_WFC_SPN_FORMAT_IDX_INT =
+            getCarrierConfigKey("KEY_WFC_SPN_FORMAT_IDX_INT", "wfc_spn_format_idx_int");
 
     @Override
     public void onCreate(Bundle arguments) {
         var binder = new Binder() {
             @Override
-            protected boolean onTransact(int code, @NonNull Parcel data, Parcel reply, int flags) throws RemoteException {
+            protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
                 if (code == 1) {
                     try {
                         var context = getContext();
@@ -69,11 +80,44 @@ public class PrivilegedProcess extends Instrumentation {
         var cm = context.getSystemService(CarrierConfigManager.class);
         var sm = context.getSystemService(SubscriptionManager.class);
         var values = getConfig();
-        for (var subId : sm.getActiveSubscriptionIdList()) {
+        values.putInt("vvb2060_config_version", BuildConfig.VERSION_CODE);
+        var infos = sm.getActiveSubscriptionInfoList();
+        if (infos == null) {
+            return;
+        }
+        for (var info : infos) {
+            if (info == null) {
+                continue;
+            }
+            var subId = info.getSubscriptionId();
             var bundle = cm.getConfigForSubId(subId);
+            var hasMarker = bundle != null && bundle.getInt("vvb2060_config_version", 0) != 0;
+            if (info.isEmbedded()) {
+                if (hasMarker) {
+                    clearOverride(cm, subId, persistent);
+                }
+                continue;
+            }
             if (bundle == null || bundle.getInt("vvb2060_config_version", 0) != BuildConfig.VERSION_CODE) {
-                values.putInt("vvb2060_config_version", BuildConfig.VERSION_CODE);
-                cm.overrideConfig(subId, values, persistent);
+                if (hasMarker) {
+                    clearOverride(cm, subId, persistent);
+                }
+                invokeOverrideConfig(cm, subId, values, persistent);
+            }
+        }
+    }
+
+    private static void clearOverride(CarrierConfigManager cm, int subId, boolean persistent) {
+        try {
+            invokeOverrideConfig(cm, subId, null, persistent);
+        } catch (Exception e) {
+            Log.e(TAG, Log.getStackTraceString(e));
+            if (persistent) {
+                try {
+                    invokeOverrideConfig(cm, subId, null, false);
+                } catch (Exception ex) {
+                    Log.e(TAG, Log.getStackTraceString(ex));
+                }
             }
         }
     }
@@ -91,8 +135,8 @@ public class PrivilegedProcess extends Instrumentation {
         bundle.putBoolean(CarrierConfigManager.KEY_CARRIER_WFC_SUPPORTS_WIFI_ONLY_BOOL, true);
         bundle.putBoolean(CarrierConfigManager.KEY_EDITABLE_WFC_MODE_BOOL, true);
         bundle.putBoolean(CarrierConfigManager.KEY_EDITABLE_WFC_ROAMING_MODE_BOOL, true);
-        bundle.putBoolean(CarrierConfigManager.KEY_SHOW_WIFI_CALLING_ICON_IN_STATUS_BAR_BOOL, true);
-        bundle.putInt(CarrierConfigManager.KEY_WFC_SPN_FORMAT_IDX_INT, 6);
+        bundle.putBoolean(KEY_SHOW_WIFI_CALLING_ICON_IN_STATUS_BAR_BOOL, true);
+        bundle.putInt(KEY_WFC_SPN_FORMAT_IDX_INT, 6);
 
         bundle.putBoolean(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL, true);
         bundle.putBoolean(CarrierConfigManager.KEY_HIDE_ENHANCED_4G_LTE_BOOL, false);
@@ -112,5 +156,37 @@ public class PrivilegedProcess extends Instrumentation {
                         -98,  /* SIGNAL_STRENGTH_GREAT */
                 });
         return bundle;
+    }
+
+    private static void invokeOverrideConfig(CarrierConfigManager cm, int subId,
+                                             PersistableBundle values, boolean persistent) {
+        try {
+            var method = CarrierConfigManager.class.getMethod("overrideConfig",
+                    int.class, PersistableBundle.class, boolean.class);
+            method.invoke(cm, subId, values, persistent);
+            return;
+        } catch (NoSuchMethodException ignored) {
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            var method = CarrierConfigManager.class.getMethod("overrideConfig",
+                    int.class, PersistableBundle.class);
+            method.invoke(cm, subId, values);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static String getCarrierConfigKey(String fieldName, String fallback) {
+        try {
+            var field = CarrierConfigManager.class.getField(fieldName);
+            var value = field.get(null);
+            if (value instanceof String) {
+                return (String) value;
+            }
+        } catch (Exception ignored) {
+        }
+        return fallback;
     }
 }
