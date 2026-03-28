@@ -97,6 +97,8 @@ public class PrivilegedProcess extends Instrumentation {
         bundle.putBoolean(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL, true);
         bundle.putBoolean(CarrierConfigManager.KEY_HIDE_ENHANCED_4G_LTE_BOOL, false);
         bundle.putBoolean(CarrierConfigManager.KEY_HIDE_LTE_PLUS_DATA_ICON_BOOL, false);
+        
+        bundle.putInt(CarrierConfigManager.KEY_CARRIER_USSD_METHOD_INT, 1);
 
         bundle.putBoolean(CarrierConfigManager.KEY_VONR_ENABLED_BOOL, true);
         bundle.putBoolean(CarrierConfigManager.KEY_VONR_SETTING_VISIBILITY_BOOL, true);
