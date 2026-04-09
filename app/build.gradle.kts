@@ -5,8 +5,8 @@ plugins {
 android {
     namespace = "io.github.vvb2060.ims"
     defaultConfig {
-        versionCode = 5
-        versionName = "3.0"
+        versionCode = 6
+        versionName = "3.1"
     }
     buildTypes {
         release {
@@ -38,6 +38,7 @@ android {
 }
 
 dependencies {
+    compileOnly("androidx.annotation:annotation")
     implementation(libs.shizuku.provider)
     implementation(libs.shizuku.api)
     implementation(libs.hiddenapibypass)
